@@ -424,10 +424,10 @@ void check_menu_events(uint16_t menu_event)
                     break;
 
                 case M_WP_IMAGE:
-                    if(akt_image_type != G64_IMAGE)
-                    {
-                        menu_set_entry_var1(&image_menu, M_WP_IMAGE, 1);
-                    }
+//                    if(akt_image_type != G64_IMAGE)
+//                    {
+//                        menu_set_entry_var1(&image_menu, M_WP_IMAGE, 1);
+//                    }
 
                     if(menu_get_entry_var1(&image_menu, M_WP_IMAGE))
                     {
@@ -1394,6 +1394,9 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
 
 void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length)
 {
+    uint8_t* P;
+    uint8_t d64_sector_puffer[D64_SECTOR_SIZE+5];
+    uint8_t sector_nr;
     int32_t offset = 0;
 
     switch(image_type)
@@ -1421,6 +1424,31 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
 
         ///////////////////////////////////////////////////////////////////////////
         case D64_IMAGE:	// D64
+            {
+                offset = d64_track_offset[track_nr];
+                uint8_t gap_size = d64_sector_gap[d64_track_zone[track_nr]];
+                P = track_buffer;
+
+                if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+                {
+                    for(sector_nr=0;sector_nr<d64_sector_count[track_nr];sector_nr++)
+                    {
+                        P += 29; //skip headers and GAPs
+                        for(int i=0; i<256; i += 4)
+                        {
+                            ConvertFromGCR(P, &(d64_sector_puffer[i]));
+                            P += 5;
+                            if (*gcr_track_length < (P-gcr_track))
+                            {
+                                break;                                
+                            }
+                        }
+                        fat_write_file(fd, &d64_sector_puffer[1], D64_SECTOR_SIZE);
+
+                        P += gap_size;
+                    }
+                }
+            }
             break;
 
         default:
@@ -1464,6 +1492,50 @@ inline void ConvertToGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
     tmp = (GCR_TBL[*source_buffer >> 4] << 5) | GCR_TBL[*source_buffer & 15];
     *destination_buffer++ |= (tmp >> 8) & 0x03;
     *destination_buffer = (uint8_t)tmp;
+}
+
+
+inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
+{
+    // 5 GCR in ... 4 Bytes (8 Nibbles A-H) out
+
+    /*
+        AAAAABBB BBCCCCCD DDDDEEEE EFFFFFGG GGGHHHHH
+
+        done via basic shifting.. and using a table to decode 5Bit into 4.
+
+        later: better idea from LFT : no shifting, only masking...
+        AAAAA___ , BB___BBB , __CCCCC_ , DDDD___D , E___EEEE , _FFFFF__ , GGG___GG , ___HHHHH
+
+    */
+
+    const static uint8_t GCR_DEC_TBL_H[32] = { 42,  42,  42,  42, 42,  42,  42,  42, 42,0x80,0x00,0x10, 42,0xC0,0x40,0x50,
+                                               42,  42,0x20,0x30, 42,0xF0,0x60,0x70, 42,0x90,0xA0,0xB0, 42,0xD0,0xE0,  42};
+    const static uint8_t GCR_DEC_TBL_L[32] = { 42, 42, 42, 42, 42, 42, 42, 42, 42,0x8,0x0,0x1, 42,0xC,0x4,0x5,
+                                               42, 42,0x2,0x3, 42,0xF,0x6,0x7, 42,0x9,0xA,0xB, 42,0xD,0xE, 42};
+    uint8_t* pneu;
+
+    pneu = source_buffer+1;
+    *destination_buffer++ = (uint8_t) ( GCR_DEC_TBL_H[(*source_buffer >> 3) & 0x1F]
+                                        | GCR_DEC_TBL_L[(((*source_buffer) << 2) & 0x1C ) | (((*pneu) >> 6) & 0x03)] );
+
+    source_buffer = pneu;
+    pneu = source_buffer+1;
+
+    *destination_buffer++ = (uint8_t) ( GCR_DEC_TBL_H[(*source_buffer >> 1) & 0x1F]
+                                        | GCR_DEC_TBL_L[(((*source_buffer) << 4) & 0x10 ) | (((*pneu) >> 4) & 0x0F)] );
+
+    source_buffer = pneu;
+    pneu = source_buffer+1;
+
+    *destination_buffer++ = (uint8_t) ( GCR_DEC_TBL_H[(((*source_buffer) << 1) & 0x1E ) | (((*pneu) >> 7) & 0x01)]
+                                        | GCR_DEC_TBL_L[(*pneu >> 2) & 0x1F] );
+
+    source_buffer = pneu;
+    pneu = source_buffer+1;
+
+    *destination_buffer   = (uint8_t) ( GCR_DEC_TBL_H[(((*source_buffer) << 3) & 0x18 ) | (((*pneu) >> 5) & 0x07)]
+                                        | GCR_DEC_TBL_L[*pneu & 0x1F] );
 }
 
 /////////////////////////////////////////////////////////////////////
