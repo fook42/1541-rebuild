@@ -1404,14 +1404,16 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
         ///////////////////////////////////////////////////////////////////////////
         case G64_IMAGE:	// G64
             {
-                /// Track18 eines G64 einlesen
+                // read jump-table in g64 header -- fetch track-offset
                 offset = (int32_t)track_nr - 1;
                 offset = (offset << 3) + 0x0c;
 
                 if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
                 {
+                    // now read the offsetvalue from the jumptable
                     if(fat_read_file(fd, (uint8_t*)&offset, 4))
                     {
+                        // add 2 to skip tracklengh data (here: always 0x1e0c = 7692)
                         offset += 2;
                         if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
                         {
@@ -1426,26 +1428,21 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
         case D64_IMAGE:	// D64
             {
                 offset = d64_track_offset[track_nr];
-                uint8_t gap_size = d64_sector_gap[d64_track_zone[track_nr]];
                 P = track_buffer;
 
                 if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
                 {
                     for(sector_nr=0;sector_nr<d64_sector_count[track_nr];sector_nr++)
                     {
-                        P += 29; //skip headers and GAPs
-                        for(int i=0; i<256; i += 4)
+                        // search for Sector Sync (maybe custom write routines change this)
+                        while ((P[0] != 0xFF) || (P[1] != 0xFF) || (P[2] != 0x52)) { ++P; }
+                        P += 2+10+9+5; // Sector-Sync, Sect-header, GAP, Data-Sync
+                        for(int i=0; i<260; i += 4)
                         {
                             ConvertFromGCR(P, &(d64_sector_puffer[i]));
                             P += 5;
-                            if (*gcr_track_length < (P-gcr_track))
-                            {
-                                break;                                
-                            }
                         }
                         fat_write_file(fd, &d64_sector_puffer[1], D64_SECTOR_SIZE);
-
-                        P += gap_size;
                     }
                 }
             }
@@ -1503,10 +1500,7 @@ inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
         AAAAABBB BBCCCCCD DDDDEEEE EFFFFFGG GGGHHHHH
 
         done via basic shifting.. and using a table to decode 5Bit into 4.
-
-        later: better idea from LFT : no shifting, only masking...
-        AAAAA___ , BB___BBB , __CCCCC_ , DDDD___D , E___EEEE , _FFFFF__ , GGG___GG , ___HHHHH
-
+        fook42.
     */
 
     const static uint8_t GCR_DEC_TBL_H[32] = { 42,  42,  42,  42, 42,  42,  42,  42, 42,0x80,0x00,0x10, 42,0xC0,0x40,0x50,
