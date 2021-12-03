@@ -1528,18 +1528,16 @@ inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
 
     uint8_t v;
 
-    uint8_t* pneu;
+    uint8_t* pneu = source_buffer;
 
     // AAAAA--- -----BBB_BB------
-    v = (*source_buffer)&0x07;
-    pneu = source_buffer+1;
+    v = (*pneu++)&0x07;
     v |= (*pneu)&0xC0;
     *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[*source_buffer & 0xF8] & 0xF0) | (GCR_DEC_TBL[v] & 0x0F) );
 
     // --CCCCC- -------D_DDDD----
     source_buffer = pneu;
-    v = (*pneu)&0x01;
-    pneu = source_buffer+1;
+    v = (*pneu++)&0x01;
     v |= (*pneu)&0xF0;
 
     *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[*source_buffer & 0x3E] & 0xF0) | ( GCR_DEC_TBL[v] & 0x0F) );
