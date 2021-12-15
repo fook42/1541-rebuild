@@ -4,9 +4,9 @@
 * Copyright: (c) 2020 by Thorsten Kattanek <thorsten.kattanek@gmx.de>
 * License: GPL 2
 */
-// adoption for LCD I2C handling
+// adoption for LCD I2C handling, D64 write-support
 // implementation: F00K42
-// last change: 18/09/2021
+// last change: 15/12/2021
 
 /// CPU Clock
 #ifndef F_CPU
@@ -27,6 +27,10 @@
 
 /// \brief Decodierungstabelle für Drehgeber
 const unsigned char drehimp_tab[16]PROGMEM = {0,0,2,0,0,0,0,0,1,0,0,0,0,0,0,0};
+
+
+struct fat_fs_struct* global_fs;
+struct fat_dir_entry_struct* global_file_entry;
 
 // ---
 
@@ -1204,6 +1208,8 @@ struct fat_file_struct* open_disk_image(struct fat_fs_struct* fs ,struct fat_dir
         if(fd)
         {
             *image_type = G64_IMAGE;
+            global_fs = fs;
+            global_file_entry = file_entry;
             // open_g64_image(fd);
             set_write_protection(1);
         }
@@ -1215,6 +1221,8 @@ struct fat_file_struct* open_disk_image(struct fat_fs_struct* fs ,struct fat_dir
         if(fd)
         {
             *image_type = D64_IMAGE;
+            global_fs = fs;
+            global_file_entry = file_entry;
             // open_d64_image(fd);
             set_write_protection(1);
         }
@@ -1255,15 +1263,15 @@ int8_t open_d64_image(struct fat_file_struct* fd)
 
 int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length)
 {
-    uint8_t id1 = 0;
-    uint8_t id2 = 0;
+    uint8_t id1 = 0;    // id1 and id2 identify a floppy-disk
+    uint8_t id2 = 0;    // - these need to change to .. signal a disk-change or after a format...
 
     uint8_t* P;
     uint8_t buffer[4];
-    uint8_t d64_sector_puffer[D64_SECTOR_SIZE];
     uint8_t is_read = 0;
     int32_t offset = 0;
     uint8_t sector_nr;
+    uint8_t num_of_sectors;
     uint8_t SUM;
 
     switch(image_type)
@@ -1294,13 +1302,13 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
         ///////////////////////////////////////////////////////////////////////////
         case D64_IMAGE: // D64
         {
-            offset = d64_track_offset[track_nr];
-
+            offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
+            num_of_sectors = d64_sector_count[d64_track_zone[track_nr]];
             if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
             {
                 P = track_buffer;
 
-                for(sector_nr=0;sector_nr<d64_sector_count[track_nr];sector_nr++)
+                for(sector_nr=0; sector_nr < num_of_sectors; ++sector_nr)
                 {
                     fat_read_file(fd, d64_sector_puffer, D64_SECTOR_SIZE);
 
@@ -1311,12 +1319,12 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
                     *P++ = 0xFF;								// SYNC
 
                     buffer[0] = 0x08;							// Header Markierung
-                    buffer[1] = sector_nr ^ track_nr ^ id2 ^ id1;				// Checksumme
+                    buffer[1] = sector_nr ^ track_nr ^ id2 ^ id1;   // Checksumme
                     buffer[2] = sector_nr;
                     buffer[3] = track_nr;
                     ConvertToGCR(buffer, P);
+                    P += 5;
 
-/* -- hint this data is constant -- replaced with precalculated data...
                     buffer[0] = id2;
                     // This is the second character of the ID that you specify when creating a new disk.
                     // The drive uses this and the next byte to check with the byte in memory to ensure
@@ -1324,17 +1332,9 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
                     buffer[1] = id1;
                     buffer[2] = 0x0F;
                     buffer[3] = 0x0F;
-                    ConvertToGCR(buffer, P+5);
-                    P += 10;
-*/
+                    ConvertToGCR(buffer, P);
                     P += 5;
 
-                    *P++ = 0x52;
-                    *P++ = 0x94;
-                    *P++ = 0xA5;
-                    *P++ = 0x55;
-                    *P++ = 0x55;
-// --
                     // GAP Bytes als Lücke
                     memset(P, 0x55, HEADER_GAP_BYTES);
                     P += HEADER_GAP_BYTES;
@@ -1395,8 +1395,11 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
 void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length)
 {
     uint8_t* P;
-    uint8_t d64_sector_puffer[D64_SECTOR_SIZE+5];
+    uint8_t* Out_P;
+    uint8_t* old_Out_P;
     uint8_t sector_nr;
+    uint8_t num;
+    uint8_t temp;
     int32_t offset = 0;
 
     switch(image_type)
@@ -1413,7 +1416,7 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
                     // now read the offsetvalue from the jumptable
                     if(fat_read_file(fd, (uint8_t*)&offset, 4))
                     {
-                        // add 2 to skip tracklengh data (here: always 0x1e0c = 7692)
+                        // add 2 to skip tracklengh data
                         offset += 2;
                         if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
                         {
@@ -1427,27 +1430,102 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
         ///////////////////////////////////////////////////////////////////////////
         case D64_IMAGE:	// D64
             {
-                offset = d64_track_offset[track_nr];
                 P = track_buffer;
+                sector_nr = d64_sector_count[d64_track_zone[track_nr]];
+                temp = 0;
 
+                offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
                 if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
                 {
-                    for(sector_nr=0;sector_nr<d64_sector_count[track_nr];sector_nr++)
+                    while (sector_nr > D64_WRITEBLOCK_SIZE)
                     {
-                        // search for Sector Sync (maybe custom write routines change this)
-                        while ((P[0] != 0xFF) || (P[1] != 0xFF) || (P[2] != 0x52)) { ++P; }
-                        P+=2;
-                        // find Data-Sync .. ignore SectorHeader-Data
-                        while ((P[0] != 0xFF) || (P[1] != 0x55)) { ++P; }
-                        ++P;
-//                        P += 2+10+9+5; // Sector-Sync, Sect-header, GAP, Data-Sync
-                        for(int i=0; i<260; i += 4)
+                        Out_P = d64_sector_puffer;
+                        for (num=0; num<D64_WRITEBLOCK_SIZE; ++num)
                         {
-                            ConvertFromGCR(P, &(d64_sector_puffer[i]));
-                            P += 5;
+                            old_Out_P = Out_P;
+                            // find track and sector-markers .. FF FF 52 ... FF FF 55
+                            do
+                            {
+                                while(*P++ != 0xFF) { };
+                                if (*P++ == 0xFF)
+                                {
+                                    while(*P == 0xFF) { ++P; };
+                                    if (*P == 0x52)
+                                    {
+                                        break;
+                                    }
+                                }
+                            } while(1);
+                            do
+                            {
+                                while(*P++ != 0xFF) { };
+                                if (*P++ == 0xFF)
+                                {
+                                    while(*P == 0xFF) { ++P; };
+                                    if (*P == 0x55)
+                                    {
+                                        break;
+                                    }
+                                }
+                            } while(1);
+                            // ----
+
+                            for(int i=0; i<65; ++i)
+                            {
+                                ConvertFromGCR(P, Out_P);
+                                P += 5;
+                                Out_P += 4;
+                            }
+                            *old_Out_P = temp;  // copy last byte from last block to first of new.
+                            Out_P -= 4;
+                            temp = *Out_P;
                         }
-                        fat_write_file(fd, &d64_sector_puffer[1], D64_SECTOR_SIZE);
+                        fat_write_file(fd, &d64_sector_puffer[1], D64_WRITEBLOCK_SIZE*D64_SECTOR_SIZE);
+                        sector_nr -= D64_WRITEBLOCK_SIZE;
                     }
+
+                    Out_P = d64_sector_puffer;
+                    num = sector_nr;
+                    while (sector_nr > 0)
+                    {
+                        old_Out_P = Out_P;
+                        do
+                        {
+                            while(*P++ != 0xFF) { };
+                            if (*P++ == 0xFF)
+                            {
+                                while(*P == 0xFF) { ++P; };
+                                if (*P == 0x52)
+                                {
+                                    break;
+                                }
+                            }
+                        } while(1);
+
+                        do
+                        {
+                            while(*P++ != 0xFF) { };
+                            if (*P++ == 0xFF)
+                            {
+                                while(*P == 0xFF) { ++P; };
+                                if (*P == 0x55)
+                                {
+                                    break;
+                                }
+                            }
+                        } while(1);
+                        for(int i=0; i<65; ++i)
+                        {
+                            ConvertFromGCR(P, Out_P);
+                            P += 5;
+                            Out_P += 4;
+                        }
+                        *old_Out_P = temp;  // copy last byte from last block to first of new.
+                        Out_P -= 4;
+                        temp = *Out_P;
+                        --sector_nr;
+                    }
+                    fat_write_file(fd, &d64_sector_puffer[1], num*D64_SECTOR_SIZE);
                 }
             }
             break;
@@ -1461,6 +1539,7 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
 
 void remove_image()
 {
+    close_disk_image(fd);
     is_image_mount = 0;
     akt_image_type = UNDEF_IMAGE;
     set_write_protection(1);
@@ -1526,33 +1605,39 @@ inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
         0x04,0x5E,0x70,0x00,0x00,0x00,0x00,0x00,0xD0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
         0xE5,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
 
-    uint8_t v;
+    uint8_t h_nibble, l_nibble;
 
-    uint8_t* pneu = source_buffer;
+    // AAAAABBB_BB------
+    h_nibble = (*source_buffer) & 0xF8;
 
-    // AAAAA--- -----BBB_BB------
-    v = (*pneu++)&0x07;
-    v |= (*pneu)&0xC0;
-    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[*source_buffer & 0xF8] & 0xF0) | (GCR_DEC_TBL[v] & 0x0F) );
+    l_nibble = (*source_buffer++) & 0x07;
+    l_nibble |= (*source_buffer) & 0xC0;
 
-    // --CCCCC- -------D_DDDD----
-    source_buffer = pneu;
-    v = (*pneu++)&0x01;
-    v |= (*pneu)&0xF0;
+    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
 
-    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[*source_buffer & 0x3E] & 0xF0) | ( GCR_DEC_TBL[v] & 0x0F) );
+    // --CCCCCD_DDDD----
+    h_nibble = (*source_buffer) & 0x3E;
 
-    // ----EEEE_E------- -FFFFF--
-    v = (*pneu++)&0x0F;
-    v |= (*pneu)&0x80;
+    l_nibble = (*source_buffer++) & 0x01;
+    l_nibble |= (*source_buffer) & 0xF0;
 
-    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[v] & 0xF0) | (GCR_DEC_TBL[(*pneu) & 0x7C] & 0x0F) );
+    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | ( GCR_DEC_TBL[l_nibble] & 0x0F) );
 
-    // ------GG_GGG----- ---HHHHH
-    v = (*pneu++)&0x03;
-    v |= (*pneu)&0xE0;
+    // ----EEEE_EFFFFF--
+    h_nibble = (*source_buffer++) & 0x0F;
+    h_nibble |= (*source_buffer) & 0x80;
 
-    *destination_buffer   = (uint8_t) ( (GCR_DEC_TBL[v] & 0xF0) | (GCR_DEC_TBL[(*pneu) & 0x1F] & 0x0F) );
+    l_nibble = (*source_buffer) & 0x7C;
+
+    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
+
+    // ------GG_GGGHHHHH
+    h_nibble = (*source_buffer++) & 0x03;
+    h_nibble |= (*source_buffer) & 0xE0;
+
+    l_nibble = (*source_buffer) & 0x1F;
+
+    *destination_buffer   = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
 }
 
 /////////////////////////////////////////////////////////////////////
