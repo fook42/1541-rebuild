@@ -308,8 +308,7 @@ const uint8_t d64_sector_gap[4] = {12, 21, 16, 13}; // von GPZ Code übermommen 
 #define HEADER_GAP_BYTES 9
 
 #define D64_SECTOR_SIZE (256)
-#define D64_WRITEBLOCK_SIZE (16)
-uint8_t d64_sector_puffer[D64_WRITEBLOCK_SIZE*D64_SECTOR_SIZE+5];
+uint8_t d64_sector_puffer[D64_SECTOR_SIZE+5];
 
 // Ringpuffer für reinkommende Stepper Signale
 uint8_t stepper_signal_puffer[0x100]; // Ringpuffer für Stepper Signale (256 Bytes)

@@ -6,7 +6,7 @@
 */
 // adoption for LCD I2C handling, D64 write-support
 // implementation: F00K42
-// last change: 15/12/2021
+// last change: 17/12/2021
 
 /// CPU Clock
 #ifndef F_CPU
@@ -31,6 +31,9 @@ const unsigned char drehimp_tab[16]PROGMEM = {0,0,2,0,0,0,0,0,1,0,0,0,0,0,0,0};
 
 struct fat_fs_struct* global_fs;
 struct fat_dir_entry_struct* global_file_entry;
+
+uint8_t id1 = 0;    // id1 and id2 identify a floppy-disk
+uint8_t id2 = 0;    // - these need to change to .. signal a disk-change or after a format...
 
 // ---
 
@@ -446,9 +449,9 @@ void check_menu_events(uint16_t menu_event)
                 case M_PIN_PB2:
                     if(menu_get_entry_var1(&settings_menu, M_PIN_PB2))
                     {
-                        DDRB |= 1<<PB2;
+                        PORTB |= 1<<PB2;
                     } else {
-                        DDRB &= ~(1<<PB2);
+                        PORTB &= ~(1<<PB2);
                     }
                     menu_refresh();
                     break;
@@ -456,9 +459,9 @@ void check_menu_events(uint16_t menu_event)
                 case M_PIN_PB3:
                     if(menu_get_entry_var1(&settings_menu, M_PIN_PB3))
                     {
-                        DDRB |= 1<<PB3;
+                        PORTB |= 1<<PB3;
                     } else {
-                        DDRB &= ~(1<<PB3);
+                        PORTB &= ~(1<<PB3);
                     }
                     menu_refresh();
                     break;
@@ -736,8 +739,7 @@ void filebrowser_refresh()
 
 void init_pb2_pb3()
 {
-    DDRB &= ~(1<<PB2 | 1<<PB3);
-    PORTB |= 1<<PB2 | 1<<PB3;
+    DDRB |= (1<<PB2) | (1<<PB3);        // configure data-direction of PortB2/3 to "output"
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1263,9 +1265,6 @@ int8_t open_d64_image(struct fat_file_struct* fd)
 
 int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length)
 {
-    uint8_t id1 = 0;    // id1 and id2 identify a floppy-disk
-    uint8_t id2 = 0;    // - these need to change to .. signal a disk-change or after a format...
-
     uint8_t* P;
     uint8_t buffer[4];
     uint8_t is_read = 0;
@@ -1396,11 +1395,11 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
 {
     uint8_t* P;
     uint8_t* Out_P;
-    uint8_t* old_Out_P;
     uint8_t sector_nr;
     uint8_t num;
     uint8_t temp;
     int32_t offset = 0;
+    int32_t offset_track = 0;
 
     switch(image_type)
     {
@@ -1432,76 +1431,88 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
             {
                 P = track_buffer;
                 sector_nr = d64_sector_count[d64_track_zone[track_nr]];
-                temp = 0;
+                uint8_t *P_end = &track_buffer[*gcr_track_length];
 
-                offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
+                offset_track = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
+
+                // find first track-marker .. FF FF 52 ... FF FF 55
+                do
+                {
+                    // tricky thing.. while searching for first track-marker
+                    //  copy all "wrapped" bytes of last sector to the end again.
+                    while((temp = *P++) != 0xFF) { *P_end++ = temp; };
+                    if (*P++ == 0xFF)
+                    {
+                        while(*P == 0xFF) { ++P; };
+                        if (*P == 0x52)
+                        {
+                            break;
+                        }
+                    }
+                } while(1);
+                ConvertFromGCR(P, d64_sector_puffer);
+                if (track_nr != d64_sector_puffer[3])
+                {
+                    break;
+                }
+                P += 5;
+                offset = offset_track + (d64_sector_puffer[2]*D64_SECTOR_SIZE);
                 if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
                 {
-                    while (sector_nr > D64_WRITEBLOCK_SIZE)
+                    // lets extract the given FloppyID for further readback of GCR...
+                    ConvertFromGCR(P, d64_sector_puffer);
+                    id2 = d64_sector_puffer[0];
+                    id1 = d64_sector_puffer[1];
+                    P += 5;
+                    // find sector-marker
+                    do
                     {
-                        Out_P = d64_sector_puffer;
-                        for (num=0; num<D64_WRITEBLOCK_SIZE; ++num)
+                        while(*P++ != 0xFF) { };
+                        if (*P++ == 0xFF)
                         {
-                            old_Out_P = Out_P;
-                            // find track and sector-markers .. FF FF 52 ... FF FF 55
-                            do
+                            while(*P == 0xFF) { ++P; };
+                            if (*P == 0x55)
                             {
-                                while(*P++ != 0xFF) { };
-                                if (*P++ == 0xFF)
-                                {
-                                    while(*P == 0xFF) { ++P; };
-                                    if (*P == 0x52)
-                                    {
-                                        break;
-                                    }
-                                }
-                            } while(1);
-                            do
-                            {
-                                while(*P++ != 0xFF) { };
-                                if (*P++ == 0xFF)
-                                {
-                                    while(*P == 0xFF) { ++P; };
-                                    if (*P == 0x55)
-                                    {
-                                        break;
-                                    }
-                                }
-                            } while(1);
-                            // ----
-
-                            for(int i=0; i<65; ++i)
-                            {
-                                ConvertFromGCR(P, Out_P);
-                                P += 5;
-                                Out_P += 4;
+                                break;
                             }
-                            *old_Out_P = temp;  // copy last byte from last block to first of new.
-                            Out_P -= 4;
-                            temp = *Out_P;
                         }
-                        fat_write_file(fd, &d64_sector_puffer[1], D64_WRITEBLOCK_SIZE*D64_SECTOR_SIZE);
-                        sector_nr -= D64_WRITEBLOCK_SIZE;
-                    }
-
+                    } while(1);
+                    // ----
                     Out_P = d64_sector_puffer;
-                    num = sector_nr;
-                    while (sector_nr > 0)
+                    for(int i=0; i<65; ++i)
                     {
-                        old_Out_P = Out_P;
-                        do
-                        {
-                            while(*P++ != 0xFF) { };
-                            if (*P++ == 0xFF)
-                            {
-                                while(*P == 0xFF) { ++P; };
-                                if (*P == 0x52)
-                                {
-                                    break;
-                                }
-                            }
-                        } while(1);
+                        ConvertFromGCR(P, Out_P);
+                        P += 5;
+                        Out_P += 4;
+                    }
+                    fat_write_file(fd, &d64_sector_puffer[1], D64_SECTOR_SIZE);
+                }
 
+                for(num=0; num<(sector_nr-1); ++num)
+                {
+                    // find track-marker .. FF FF 52 ... FF FF 55
+                    do
+                    {
+                        while(*P++ != 0xFF) { };
+                        if (*P++ == 0xFF)
+                        {
+                            while(*P == 0xFF) { ++P; };
+                            if (*P == 0x52)
+                            {
+                                break;
+                            }
+                        }
+                    } while(1);
+                    ConvertFromGCR(P, d64_sector_puffer);
+                    if (track_nr != d64_sector_puffer[3])
+                    {
+                        break;
+                    }
+                    P += 4;
+                    offset = offset_track + (d64_sector_puffer[2]*D64_SECTOR_SIZE);
+                    if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+                    {
+                        // find sector-marker
                         do
                         {
                             while(*P++ != 0xFF) { };
@@ -1514,18 +1525,16 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
                                 }
                             }
                         } while(1);
+                        // ----
+                        Out_P = d64_sector_puffer;
                         for(int i=0; i<65; ++i)
                         {
                             ConvertFromGCR(P, Out_P);
                             P += 5;
                             Out_P += 4;
                         }
-                        *old_Out_P = temp;  // copy last byte from last block to first of new.
-                        Out_P -= 4;
-                        temp = *Out_P;
-                        --sector_nr;
+                        fat_write_file(fd, &d64_sector_puffer[1], D64_SECTOR_SIZE);
                     }
-                    fat_write_file(fd, &d64_sector_puffer[1], num*D64_SECTOR_SIZE);
                 }
             }
             break;
@@ -1584,7 +1593,7 @@ inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
 
         new approach similar to LFT GCR decoding..
         usage of a big table 4 unshifted keys. combined upper and lower
-        fook42.
+        fook42 2021.
     */
 
     const static uint8_t GCR_DEC_TBL[] = {
@@ -1718,7 +1727,6 @@ ISR (PCINT3_vect)
     // Stepper Signale an PD0 und PD1
     stepper_signal_puffer[stepper_signal_w_pos] = STP_PIN & ((1<<STP0) | (1<<STP1));
     stepper_signal_w_pos++;
-    DDRB = (DDRB & ~(1<<PB3)) | ~(DDRB & (1<<PB3));
 }
 
 ISR (TIMER0_COMPA_vect)
