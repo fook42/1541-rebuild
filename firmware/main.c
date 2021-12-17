@@ -4,9 +4,9 @@
 * Copyright: (c) 2020 by Thorsten Kattanek <thorsten.kattanek@gmx.de>
 * License: GPL 2
 */
-// adoption for LCD I2C handling
+// adoption for LCD I2C handling, D64 write-support
 // implementation: F00K42
-// last change: 18/09/2021
+// last change: 17/12/2021
 
 /// CPU Clock
 #ifndef F_CPU
@@ -27,6 +27,13 @@
 
 /// \brief Decodierungstabelle für Drehgeber
 const unsigned char drehimp_tab[16]PROGMEM = {0,0,2,0,0,0,0,0,1,0,0,0,0,0,0,0};
+
+
+struct fat_fs_struct* global_fs;
+struct fat_dir_entry_struct* global_file_entry;
+
+uint8_t id1 = 0;    // id1 and id2 identify a floppy-disk
+uint8_t id2 = 0;    // - these need to change to .. signal a disk-change or after a format...
 
 // ---
 
@@ -424,10 +431,10 @@ void check_menu_events(uint16_t menu_event)
                     break;
 
                 case M_WP_IMAGE:
-                    if(akt_image_type != G64_IMAGE)
-                    {
-                        menu_set_entry_var1(&image_menu, M_WP_IMAGE, 1);
-                    }
+//                    if(akt_image_type != G64_IMAGE)
+//                    {
+//                        menu_set_entry_var1(&image_menu, M_WP_IMAGE, 1);
+//                    }
 
                     if(menu_get_entry_var1(&image_menu, M_WP_IMAGE))
                     {
@@ -442,9 +449,9 @@ void check_menu_events(uint16_t menu_event)
                 case M_PIN_PB2:
                     if(menu_get_entry_var1(&settings_menu, M_PIN_PB2))
                     {
-                        DDRB |= 1<<PB2;
+                        PORTB |= 1<<PB2;
                     } else {
-                        DDRB &= ~(1<<PB2);
+                        PORTB &= ~(1<<PB2);
                     }
                     menu_refresh();
                     break;
@@ -452,9 +459,9 @@ void check_menu_events(uint16_t menu_event)
                 case M_PIN_PB3:
                     if(menu_get_entry_var1(&settings_menu, M_PIN_PB3))
                     {
-                        DDRB |= 1<<PB3;
+                        PORTB |= 1<<PB3;
                     } else {
-                        DDRB &= ~(1<<PB3);
+                        PORTB &= ~(1<<PB3);
                     }
                     menu_refresh();
                     break;
@@ -732,8 +739,7 @@ void filebrowser_refresh()
 
 void init_pb2_pb3()
 {
-    DDRB &= ~(1<<PB2 | 1<<PB3);
-    PORTB |= 1<<PB2 | 1<<PB3;
+    DDRB |= (1<<PB2) | (1<<PB3);        // configure data-direction of PortB2/3 to "output"
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1204,17 +1210,21 @@ struct fat_file_struct* open_disk_image(struct fat_fs_struct* fs ,struct fat_dir
         if(fd)
         {
             *image_type = G64_IMAGE;
+            global_fs = fs;
+            global_file_entry = file_entry;
             // open_g64_image(fd);
             set_write_protection(1);
         }
     }
     else if(!strcmp(extension,".d64"))
     {
-        // Laut Extensions ein D64
+        // Laut Extension ein D64
         fd = fat_open_file(fs, file_entry);
         if(fd)
         {
             *image_type = D64_IMAGE;
+            global_fs = fs;
+            global_file_entry = file_entry;
             // open_d64_image(fd);
             set_write_protection(1);
         }
@@ -1255,15 +1265,12 @@ int8_t open_d64_image(struct fat_file_struct* fd)
 
 int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length)
 {
-    uint8_t id1 = 0;
-    uint8_t id2 = 0;
-
     uint8_t* P;
     uint8_t buffer[4];
-    uint8_t d64_sector_puffer[D64_SECTOR_SIZE];
     uint8_t is_read = 0;
     int32_t offset = 0;
     uint8_t sector_nr;
+    uint8_t num_of_sectors;
     uint8_t SUM;
 
     switch(image_type)
@@ -1294,13 +1301,13 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
         ///////////////////////////////////////////////////////////////////////////
         case D64_IMAGE: // D64
         {
-            offset = d64_track_offset[track_nr];
-
+            offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
+            num_of_sectors = d64_sector_count[d64_track_zone[track_nr]];
             if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
             {
                 P = track_buffer;
 
-                for(sector_nr=0;sector_nr<d64_sector_count[track_nr];sector_nr++)
+                for(sector_nr=0; sector_nr < num_of_sectors; ++sector_nr)
                 {
                     fat_read_file(fd, d64_sector_puffer, D64_SECTOR_SIZE);
 
@@ -1311,12 +1318,12 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
                     *P++ = 0xFF;								// SYNC
 
                     buffer[0] = 0x08;							// Header Markierung
-                    buffer[1] = sector_nr ^ track_nr ^ id2 ^ id1;				// Checksumme
+                    buffer[1] = sector_nr ^ track_nr ^ id2 ^ id1;   // Checksumme
                     buffer[2] = sector_nr;
                     buffer[3] = track_nr;
                     ConvertToGCR(buffer, P);
+                    P += 5;
 
-/* -- hint this data is constant -- replaced with precalculated data...
                     buffer[0] = id2;
                     // This is the second character of the ID that you specify when creating a new disk.
                     // The drive uses this and the next byte to check with the byte in memory to ensure
@@ -1324,17 +1331,9 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
                     buffer[1] = id1;
                     buffer[2] = 0x0F;
                     buffer[3] = 0x0F;
-                    ConvertToGCR(buffer, P+5);
-                    P += 10;
-*/
+                    ConvertToGCR(buffer, P);
                     P += 5;
 
-                    *P++ = 0x52;
-                    *P++ = 0x94;
-                    *P++ = 0xA5;
-                    *P++ = 0x55;
-                    *P++ = 0x55;
-// --
                     // GAP Bytes als Lücke
                     memset(P, 0x55, HEADER_GAP_BYTES);
                     P += HEADER_GAP_BYTES;
@@ -1394,21 +1393,29 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
 
 void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length)
 {
+    uint8_t* P;
+    uint8_t* Out_P;
+    uint8_t sector_nr;
+    uint8_t num;
+    uint8_t temp;
     int32_t offset = 0;
+    int32_t offset_track = 0;
 
     switch(image_type)
     {
         ///////////////////////////////////////////////////////////////////////////
         case G64_IMAGE:	// G64
             {
-                /// Track18 eines G64 einlesen
+                // read jump-table in g64 header -- fetch track-offset
                 offset = (int32_t)track_nr - 1;
                 offset = (offset << 3) + 0x0c;
 
                 if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
                 {
+                    // now read the offsetvalue from the jumptable
                     if(fat_read_file(fd, (uint8_t*)&offset, 4))
                     {
+                        // add 2 to skip tracklengh data
                         offset += 2;
                         if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
                         {
@@ -1421,6 +1428,115 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
 
         ///////////////////////////////////////////////////////////////////////////
         case D64_IMAGE:	// D64
+            {
+                P = track_buffer;
+                sector_nr = d64_sector_count[d64_track_zone[track_nr]];
+                uint8_t *P_end = &track_buffer[*gcr_track_length];
+
+                offset_track = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
+
+                // find first track-marker .. FF FF 52 ... FF FF 55
+                do
+                {
+                    // tricky thing.. while searching for first track-marker
+                    //  copy all "wrapped" bytes of last sector to the end again.
+                    while((temp = *P++) != 0xFF) { *P_end++ = temp; };
+                    if (*P++ == 0xFF)
+                    {
+                        while(*P == 0xFF) { ++P; };
+                        if (*P == 0x52)
+                        {
+                            break;
+                        }
+                    }
+                } while(1);
+                ConvertFromGCR(P, d64_sector_puffer);
+                if (track_nr != d64_sector_puffer[3])
+                {
+                    break;
+                }
+                P += 5;
+                offset = offset_track + (d64_sector_puffer[2]*D64_SECTOR_SIZE);
+                if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+                {
+                    // lets extract the given FloppyID for further readback of GCR...
+                    ConvertFromGCR(P, d64_sector_puffer);
+                    id2 = d64_sector_puffer[0];
+                    id1 = d64_sector_puffer[1];
+                    P += 5;
+                    // find sector-marker
+                    do
+                    {
+                        while(*P++ != 0xFF) { };
+                        if (*P++ == 0xFF)
+                        {
+                            while(*P == 0xFF) { ++P; };
+                            if (*P == 0x55)
+                            {
+                                break;
+                            }
+                        }
+                    } while(1);
+                    // ----
+                    Out_P = d64_sector_puffer;
+                    for(int i=0; i<65; ++i)
+                    {
+                        ConvertFromGCR(P, Out_P);
+                        P += 5;
+                        Out_P += 4;
+                    }
+                    fat_write_file(fd, &d64_sector_puffer[1], D64_SECTOR_SIZE);
+                }
+
+                for(num=0; num<(sector_nr-1); ++num)
+                {
+                    // find track-marker .. FF FF 52 ... FF FF 55
+                    do
+                    {
+                        while(*P++ != 0xFF) { };
+                        if (*P++ == 0xFF)
+                        {
+                            while(*P == 0xFF) { ++P; };
+                            if (*P == 0x52)
+                            {
+                                break;
+                            }
+                        }
+                    } while(1);
+                    ConvertFromGCR(P, d64_sector_puffer);
+                    if (track_nr != d64_sector_puffer[3])
+                    {
+                        break;
+                    }
+                    P += 4;
+                    offset = offset_track + (d64_sector_puffer[2]*D64_SECTOR_SIZE);
+                    if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+                    {
+                        // find sector-marker
+                        do
+                        {
+                            while(*P++ != 0xFF) { };
+                            if (*P++ == 0xFF)
+                            {
+                                while(*P == 0xFF) { ++P; };
+                                if (*P == 0x55)
+                                {
+                                    break;
+                                }
+                            }
+                        } while(1);
+                        // ----
+                        Out_P = d64_sector_puffer;
+                        for(int i=0; i<65; ++i)
+                        {
+                            ConvertFromGCR(P, Out_P);
+                            P += 5;
+                            Out_P += 4;
+                        }
+                        fat_write_file(fd, &d64_sector_puffer[1], D64_SECTOR_SIZE);
+                    }
+                }
+            }
             break;
 
         default:
@@ -1432,6 +1548,7 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
 
 void remove_image()
 {
+    close_disk_image(fd);
     is_image_mount = 0;
     akt_image_type = UNDEF_IMAGE;
     set_write_protection(1);
@@ -1464,6 +1581,72 @@ inline void ConvertToGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
     tmp = (GCR_TBL[*source_buffer >> 4] << 5) | GCR_TBL[*source_buffer & 15];
     *destination_buffer++ |= (tmp >> 8) & 0x03;
     *destination_buffer = (uint8_t)tmp;
+}
+
+
+inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
+{
+    // 5 GCR in ... 4 Bytes (8 Nibbles A-H) out
+
+    /*
+        AAAAABBB BBCCCCCD DDDDEEEE EFFFFFGG GGGHHHHH
+
+        new approach similar to LFT GCR decoding..
+        usage of a big table 4 unshifted keys. combined upper and lower
+        fook42 2021.
+    */
+
+    const static uint8_t GCR_DEC_TBL[] = {
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x40,0x00,0x28,0x00,0x61,0x00,0xAC,0x04,0xE5,
+        0x00,0x00,0x82,0x03,0x00,0x0F,0x16,0x07,0x00,0x09,0xCA,0x0B,0x40,0x0D,0x5E,0x00,
+        0x00,0x82,0x00,0x90,0x28,0x00,0x30,0x00,0x00,0x00,0xF0,0x00,0x61,0x00,0x70,0x00,
+        0x00,0x03,0x90,0x00,0xAC,0x00,0xB0,0x00,0x04,0x00,0xD0,0x00,0xE5,0x00,0x00,0x00,
+        0x00,0x00,0x28,0xAC,0x00,0x0F,0x09,0x0D,0x82,0x00,0x00,0x00,0x03,0x00,0x00,0x00,
+        0x00,0x0F,0x00,0x00,0x0F,0x00,0x00,0x00,0x16,0x00,0x00,0x00,0x07,0x00,0x00,0x00,
+        0x00,0x16,0x30,0xB0,0x09,0x00,0x00,0x00,0xCA,0x00,0x00,0x00,0x0B,0x00,0x00,0x00,
+        0x40,0x07,0x00,0x00,0x0D,0x00,0x00,0x00,0x5E,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x04,0x82,0x16,0xCA,0x5E,0x00,0x30,0xF0,0x70,0x90,0xB0,0xD0,0x00,
+        0x28,0x09,0x00,0x00,0x00,0x00,0x00,0x00,0x30,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0xCA,0xF0,0xD0,0x00,0x00,0x00,0x00,0xF0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x61,0x0B,0x00,0x00,0x00,0x00,0x00,0x00,0x70,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x40,0x61,0xE5,0x03,0x07,0x0B,0x00,0x90,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0xAC,0x0D,0x00,0x00,0x00,0x00,0x00,0x00,0xB0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x04,0x5E,0x70,0x00,0x00,0x00,0x00,0x00,0xD0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0xE5,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+
+    uint8_t h_nibble, l_nibble;
+
+    // AAAAABBB_BB------
+    h_nibble = (*source_buffer) & 0xF8;
+
+    l_nibble = (*source_buffer++) & 0x07;
+    l_nibble |= (*source_buffer) & 0xC0;
+
+    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
+
+    // --CCCCCD_DDDD----
+    h_nibble = (*source_buffer) & 0x3E;
+
+    l_nibble = (*source_buffer++) & 0x01;
+    l_nibble |= (*source_buffer) & 0xF0;
+
+    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | ( GCR_DEC_TBL[l_nibble] & 0x0F) );
+
+    // ----EEEE_EFFFFF--
+    h_nibble = (*source_buffer++) & 0x0F;
+    h_nibble |= (*source_buffer) & 0x80;
+
+    l_nibble = (*source_buffer) & 0x7C;
+
+    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
+
+    // ------GG_GGGHHHHH
+    h_nibble = (*source_buffer++) & 0x03;
+    h_nibble |= (*source_buffer) & 0xE0;
+
+    l_nibble = (*source_buffer) & 0x1F;
+
+    *destination_buffer   = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
 }
 
 /////////////////////////////////////////////////////////////////////
