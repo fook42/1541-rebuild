@@ -16,13 +16,14 @@ Die Hardware wird mit KiCad entwickelt. Version 5.1.4 unter Ubuntu.
 ### Software
 Die Firmware wurde in C entwickelt - kompilierbar mit avr-gcc unter Linux.
 
-#### letzte SW-Version: 1.3.5
+#### letzte SW-Version: 1.3.7
 - Unterstützung von 16\*2 LCD Displays
 - Implementation von I2C (=TWI) Routinen für Displays
    - LCD Displays mit Port Expander PCF8574
    - OLEDs nativ (SSD1306 kompatibel)
 - Autodetektion welcher Display-Type verbunden ist
    - LCD per 10pin-Anschluss, LCD per I2C, OLED per I2C
+- D64-Schreibroutine zum ablegen von Daten direkt ins D64-format
 
 ### Bilder
 ... vom 1.4.2 PCB:
