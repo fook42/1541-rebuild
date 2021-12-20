@@ -1227,6 +1227,16 @@ struct fat_file_struct* open_disk_image(struct fat_fs_struct* fs ,struct fat_dir
             global_file_entry = file_entry;
             // open_d64_image(fd);
             set_write_protection(1);
+            // extract DiskID from $165A2+A3 .. better than nothing.
+            int32_t offset = 0x165A2;
+            if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+            {
+                if (2 == fat_read_file(fd, d64_sector_puffer, 2))
+                {
+                    id1 = d64_sector_puffer[0];
+                    id2 = d64_sector_puffer[1];
+                }
+            }
         }
     }
 
@@ -1563,24 +1573,21 @@ inline void ConvertToGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
     const static uint8_t GCR_TBL[16] = {0x0a, 0x0b, 0x12, 0x13, 0x0e, 0x0f, 0x16, 0x17,0x09, 0x19, 0x1a, 0x1b, 0x0d, 0x1d, 0x1e, 0x15};
     uint16_t tmp;
 
-    tmp = (GCR_TBL[*source_buffer >> 4] << 5) | GCR_TBL[*source_buffer & 15];
-    *destination_buffer++ = tmp >> 2;
-    *destination_buffer = (tmp << 6) & 0xc0;
-    source_buffer++;
+    tmp = (GCR_TBL[source_buffer[0] >> 4] << 5) | GCR_TBL[source_buffer[0] & 15];
+    destination_buffer[0] = tmp >> 2;
+    destination_buffer[1] = (tmp << 6) & 0xc0;
 
-    tmp = (GCR_TBL[*source_buffer >> 4] << 5) | GCR_TBL[*source_buffer & 15];
-    *destination_buffer++ |= (tmp >> 4) & 0x3f;
-    *destination_buffer = (tmp << 4) & 0xf0;
-    source_buffer++;
+    tmp = (GCR_TBL[source_buffer[1] >> 4] << 5) | GCR_TBL[source_buffer[1] & 15];
+    destination_buffer[1] |= (tmp >> 4) & 0x3f;
+    destination_buffer[2]  = (tmp << 4) & 0xf0;
 
-    tmp = (GCR_TBL[*source_buffer >> 4] << 5) | GCR_TBL[*source_buffer & 15];
-    *destination_buffer++ |= (tmp >> 6) & 0x0f;
-    *destination_buffer = (tmp << 2) & 0xfc;
-    source_buffer++;
+    tmp = (GCR_TBL[source_buffer[2] >> 4] << 5) | GCR_TBL[source_buffer[2] & 15];
+    destination_buffer[2] |= (tmp >> 6) & 0x0f;
+    destination_buffer[3]  = (tmp << 2) & 0xfc;
 
-    tmp = (GCR_TBL[*source_buffer >> 4] << 5) | GCR_TBL[*source_buffer & 15];
-    *destination_buffer++ |= (tmp >> 8) & 0x03;
-    *destination_buffer = (uint8_t)tmp;
+    tmp = (GCR_TBL[source_buffer[3] >> 4] << 5) | GCR_TBL[source_buffer[3] & 15];
+    destination_buffer[3] |= (tmp >> 8) & 0x03;
+    destination_buffer[4]  = (uint8_t)tmp;
 }
 
 
@@ -1617,36 +1624,36 @@ inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
     uint8_t h_nibble, l_nibble;
 
     // AAAAABBB_BB------
-    h_nibble = (*source_buffer) & 0xF8;
+    h_nibble = source_buffer[0] & 0xF8;
 
-    l_nibble = (*source_buffer++) & 0x07;
-    l_nibble |= (*source_buffer) & 0xC0;
+    l_nibble = source_buffer[0] & 0x07;
+    l_nibble |= source_buffer[1] & 0xC0;
 
-    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
+    destination_buffer[0] = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
 
     // --CCCCCD_DDDD----
-    h_nibble = (*source_buffer) & 0x3E;
+    h_nibble = source_buffer[1] & 0x3E;
 
-    l_nibble = (*source_buffer++) & 0x01;
-    l_nibble |= (*source_buffer) & 0xF0;
+    l_nibble = source_buffer[1] & 0x01;
+    l_nibble |= source_buffer[2] & 0xF0;
 
-    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | ( GCR_DEC_TBL[l_nibble] & 0x0F) );
+    destination_buffer[1] = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
 
     // ----EEEE_EFFFFF--
-    h_nibble = (*source_buffer++) & 0x0F;
-    h_nibble |= (*source_buffer) & 0x80;
+    h_nibble = source_buffer[2] & 0x0F;
+    h_nibble |= source_buffer[3] & 0x80;
 
-    l_nibble = (*source_buffer) & 0x7C;
+    l_nibble = source_buffer[3] & 0x7C;
 
-    *destination_buffer++ = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
+    destination_buffer[2] = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
 
     // ------GG_GGGHHHHH
-    h_nibble = (*source_buffer++) & 0x03;
-    h_nibble |= (*source_buffer) & 0xE0;
+    h_nibble = source_buffer[3] & 0x03;
+    h_nibble |= source_buffer[4] & 0xE0;
 
-    l_nibble = (*source_buffer) & 0x1F;
+    l_nibble = source_buffer[4] & 0x1F;
 
-    *destination_buffer   = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
+    destination_buffer[3] = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
 }
 
 /////////////////////////////////////////////////////////////////////
