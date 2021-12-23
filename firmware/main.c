@@ -1225,18 +1225,8 @@ struct fat_file_struct* open_disk_image(struct fat_fs_struct* fs ,struct fat_dir
             *image_type = D64_IMAGE;
             global_fs = fs;
             global_file_entry = file_entry;
-            // open_d64_image(fd);
+            (void) open_d64_image(fd);
             set_write_protection(1);
-            // extract DiskID from $165A2+A3 .. better than nothing.
-            int32_t offset = 0x165A2;
-            if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
-            {
-                if (2 == fat_read_file(fd, d64_sector_puffer, 2))
-                {
-                    id1 = d64_sector_puffer[0];
-                    id2 = d64_sector_puffer[1];
-                }
-            }
         }
     }
 
@@ -1268,6 +1258,16 @@ int8_t open_g64_image(struct fat_file_struct* fd)
 
 int8_t open_d64_image(struct fat_file_struct* fd)
 {
+    // extract DiskID from $165A2+A3 .. better than nothing.
+    int32_t offset = (((int32_t) d64_track_offset[18]) << 8) + 0xA2;
+    if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+    {
+        if (2 == fat_read_file(fd, d64_sector_puffer, 2))
+        {
+            id1 = d64_sector_puffer[0];
+            id2 = d64_sector_puffer[1];
+        }
+    }
     return 0;
 }
 
@@ -1589,7 +1589,6 @@ inline void ConvertToGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
     destination_buffer[3] |= (tmp >> 8) & 0x03;
     destination_buffer[4]  = (uint8_t)tmp;
 }
-
 
 inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
 {
