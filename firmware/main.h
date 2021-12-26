@@ -204,8 +204,8 @@ void soe_gatearry_hi(void);
 
 struct fat_file_struct* open_disk_image(struct fat_fs_struct *fs, struct fat_dir_entry_struct* file_entry, uint8_t *image_type);
 void close_disk_image(struct fat_file_struct*);
-// int8_t open_g64_image(struct fat_file_struct *fd);
-// int8_t open_d64_image(struct fat_file_struct *fd);
+int8_t open_g64_image(struct fat_file_struct *fd);
+int8_t open_d64_image(struct fat_file_struct *fd);
 int8_t read_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length); // Tracknummer 1-42
 void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length); // Tracknummer 1-42
 
