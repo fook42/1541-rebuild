@@ -81,6 +81,7 @@ SRC += lcd.c
 SRC += i2c.c
 SRC += oled.c
 SRC += menu.c
+SRC += gcr.c
 SRC += settings.c
 
 # Sourcen der SD Card Lib von Roland Riegel hinzufügen
@@ -101,7 +102,7 @@ ASRC =
 # Optimization level, can be [0, 1, 2, 3, s].
 # 0 = turn off optimization. s = optimize for size.
 # (Note: 3 is not always the best optimization level. See avr-libc FAQ.)
-OPT = 2
+OPT = s
 
 # Debugging format.
 # Native formats for AVR-GCC's -g are stabs [default], or dwarf-2.

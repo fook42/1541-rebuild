@@ -28,6 +28,9 @@
 #include "./gui_constants.h"
 #include "./menu.h"
 
+// GCR-En/Decoding
+#include "./gcr.h"
+
 // Enthält nur die Versionsnummer als String
 #include "./version.h"
 
@@ -210,9 +213,6 @@ int8_t read_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t t
 void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length); // Tracknummer 1-42
 
 void remove_image(void);
-
-inline void ConvertToGCR(uint8_t *source_buffer, uint8_t *destination_buffer);
-inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer);
 
 void endable_wps_port(uint8_t enable);  // 0 = WPS PIN HiZ (set_write_protection() ohne Wirkung) / 1 = WPS PIN als Ausgang
 void set_write_protection(int8_t wp);   // wp=0 image nicht geschützt wp=1 image schreibgeschützt

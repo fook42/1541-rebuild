@@ -431,11 +431,6 @@ void check_menu_events(uint16_t menu_event)
                     break;
 
                 case M_WP_IMAGE:
-//                    if(akt_image_type != G64_IMAGE)
-//                    {
-//                        menu_set_entry_var1(&image_menu, M_WP_IMAGE, 1);
-//                    }
-
                     if(menu_get_entry_var1(&image_menu, M_WP_IMAGE))
                     {
                         set_write_protection(1);
@@ -1281,10 +1276,14 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
     uint8_t is_read = 0;
     int32_t offset = 0;
     uint8_t sector_nr;
-    const uint8_t num_of_sectors = d64_sector_count[d64_track_zone[track_nr]];
     uint8_t SUM;
-    const uint8_t chksum_trackid = track_nr ^ id2 ^ id1;
-    const uint8_t gap_size = d64_sector_gap[d64_track_zone[track_nr]];
+
+    if (35 < track_nr)
+    {
+        // need to fake the size of this image as we exceed the available track-information
+        // first attempt: repeat to publish track 35
+        track_nr = 35;
+    }
 
     switch(image_type)
     {
@@ -1293,8 +1292,9 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
         {
             /// Track18 eines G64 einlesen
 
-            offset = (int32_t)track_nr - 1;
-            offset = (offset << 3) + 0x0c;
+            // offset = (int32_t)track_nr - 1;
+            // offset = (offset << 3) + 0x0c;
+            offset = (int32_t)track_nr*8 + 4;
 
             if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
             {
@@ -1314,14 +1314,10 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
         ///////////////////////////////////////////////////////////////////////////
         case D64_IMAGE: // D64
         {
-            if (35 < track_nr)
-            {
-                // need to fake the size of this image as we exceed the available track-information
-                // first attempt: repeat to publish track 35
-                offset = ((int32_t) d64_track_offset[35]) << 8;   // we store only 16bit values;
-            } else {
-                offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
-            }
+            const uint8_t num_of_sectors = d64_sector_count[d64_track_zone[track_nr]];
+            const uint8_t chksum_trackid = track_nr ^ id2 ^ id1;
+            const uint8_t gap_size = d64_sector_gap[d64_track_zone[track_nr]];
+            offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
             if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
             {
                 P = track_buffer;
@@ -1340,24 +1336,24 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
                 {
                     fat_read_file(fd, &d64_sector_puffer[1], D64_SECTOR_SIZE);
 
-                    *P++ = 0xFF;								// SYNC
-                    *P++ = 0xFF;								// SYNC
-                    *P++ = 0xFF;								// SYNC
-                    *P++ = 0xFF;								// SYNC
-                    *P++ = 0xFF;								// SYNC
+                    P[0] = 0xFF;								// SYNC
+                    P[1] = 0xFF;								// SYNC
+                    P[2] = 0xFF;								// SYNC
+                    P[3] = 0xFF;								// SYNC
+                    P[4] = 0xFF;								// SYNC
 
                     buffer[0] = 0x08;							// Header Markierung
                     buffer[1] = sector_nr ^ chksum_trackid;     // Checksumme
                     buffer[2] = sector_nr;
                     buffer[3] = track_nr;
-                    ConvertToGCR(buffer, P);
-                    P += 5;
+                    ConvertToGCR(buffer, &P[5]);
 
-                    *P++ = header_bytes[0];                     // fill in constant header
-                    *P++ = header_bytes[1];                     //  bytes containing
-                    *P++ = header_bytes[2];                     //  disk-id2 & id1
-                    *P++ = header_bytes[3];
-                    *P++ = header_bytes[4];
+                    P[10] = header_bytes[0];                     // fill in constant header
+                    P[11] = header_bytes[1];                     //  bytes containing
+                    P[12] = header_bytes[2];                     //  disk-id2 & id1
+                    P[13] = header_bytes[3];
+                    P[14] = header_bytes[4];
+                    P += 15;
 
                     // GAP Bytes als Lücke
                     for (uint8_t i = HEADER_GAP_BYTES; i>0; --i)
@@ -1374,7 +1370,7 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
 
                     SUM = 0x07;     // checksum is prefilled with data-marker
                                     // -> the complete buffer can be processed
-                    for(int i=0; i<257; ++i)
+                    for (int i=0; i<257; ++i)
                     {
                         SUM ^= d64_sector_puffer[i];
                     }
@@ -1386,7 +1382,7 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
                     }
 
                     buffer[0] = d64_sector_puffer[256];
-                    buffer[1] = SUM;							// Checksum
+                    buffer[1] = SUM;   // Checksum
                     buffer[2] = 0;
                     buffer[3] = 0;
                     ConvertToGCR(buffer, P);
@@ -1577,125 +1573,6 @@ void remove_image()
 }
 
 /////////////////////////////////////////////////////////////////////
-
-inline void ConvertToGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
-{
-    /*
-        new approach for faster conversion.. without too many rotations and shifts
-
-        AAAAABBB BBCCCCCD DDDDEEEE EFFFFFGG GGGHHHHH
-        each 5bit value will be stored preshifted in GCR_ENC_TBL_L and _H
-
-        fook42 2021.
-    */
-
-    // storage of H, F, D, B - bitfields
-    const static uint8_t GCR_ENC_TBL_L[4][16] = {
-        {0x0a,0x0b,0x12,0x13,0x0e,0x0f,0x16,0x17,0x09,0x19,0x1a,0x1b,0x0d,0x1d,0x1e,0x15},
-        {0x28,0x2C,0x48,0x4C,0x38,0x3C,0x58,0x5C,0x24,0x64,0x68,0x6C,0x34,0x74,0x78,0x54},
-        {0xA0,0xB0,0x21,0x31,0xE0,0xF0,0x61,0x71,0x90,0x91,0xA1,0xB1,0xD0,0xD1,0xE1,0x51},
-        {0x82,0xC2,0x84,0xC4,0x83,0xC3,0x85,0xC5,0x42,0x46,0x86,0xC6,0x43,0x47,0x87,0x45} };
-
-    // storage of C, A, G, E - bitfields
-    const static uint8_t GCR_ENC_TBL_H[4][16] = {
-        {0x14,0x16,0x24,0x26,0x1C,0x1E,0x2C,0x2E,0x12,0x32,0x34,0x36,0x1A,0x3A,0x3C,0x2A},
-        {0x50,0x58,0x90,0x98,0x70,0x78,0xb0,0xb8,0x48,0xc8,0xd0,0xd8,0x68,0xe8,0xf0,0xa8},
-        {0x41,0x61,0x42,0x62,0xC1,0xE1,0xC2,0xE2,0x21,0x23,0x43,0x63,0xA1,0xA3,0xC3,0xA2},
-        {0x05,0x85,0x09,0x89,0x07,0x87,0x0B,0x8B,0x84,0x8C,0x0D,0x8D,0x86,0x8E,0x0F,0x8A} };
-
-    uint8_t low_nibble, high_nibble;
-
-    // AAAAABBB
-    high_nibble = source_buffer[0] >> 4;
-    low_nibble  = source_buffer[0] & 15;
-    destination_buffer[0] = GCR_ENC_TBL_H[1][high_nibble] | (GCR_ENC_TBL_L[3][low_nibble] & 0x07);
-
-    // BBCCCCCD
-    destination_buffer[1] = (GCR_ENC_TBL_L[3][low_nibble] & 0xc0);
-    high_nibble = source_buffer[1] >> 4;
-    low_nibble  = source_buffer[1] & 15;
-    destination_buffer[1] |= GCR_ENC_TBL_H[0][high_nibble] | (GCR_ENC_TBL_L[2][low_nibble] & 0x01);
-
-    // DDDDEEEE
-    destination_buffer[2] = (GCR_ENC_TBL_L[2][low_nibble] & 0xf0);
-    high_nibble = source_buffer[2] >> 4;
-    low_nibble  = source_buffer[2] & 15;
-    destination_buffer[2] |= (GCR_ENC_TBL_H[3][high_nibble] & 0x0f);
-
-    // EFFFFFGG
-    destination_buffer[3] = (GCR_ENC_TBL_H[3][high_nibble] & 0x80) |  GCR_ENC_TBL_L[1][low_nibble];
-    high_nibble = source_buffer[3] >> 4;
-    low_nibble  = source_buffer[3] & 15;
-    destination_buffer[3] |= (GCR_ENC_TBL_H[2][high_nibble] & 0x03);
-
-    // GGGHHHHH
-    destination_buffer[4] = (GCR_ENC_TBL_H[2][high_nibble] & 0xe0) |  GCR_ENC_TBL_L[0][low_nibble];
-}
-
-inline void ConvertFromGCR(uint8_t *source_buffer, uint8_t *destination_buffer)
-{
-    // 5 GCR in ... 4 Bytes (8 Nibbles A-H) out
-
-    /*
-        AAAAABBB BBCCCCCD DDDDEEEE EFFFFFGG GGGHHHHH
-
-        new approach similar to LFT GCR decoding..
-        usage of a big table 4 unshifted keys. combined upper and lower
-        fook42 2021.
-    */
-
-    const static uint8_t GCR_DEC_TBL[] = {
-        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x40,0x00,0x28,0x00,0x61,0x00,0xAC,0x04,0xE5,
-        0x00,0x00,0x82,0x03,0x00,0x0F,0x16,0x07,0x00,0x09,0xCA,0x0B,0x40,0x0D,0x5E,0x00,
-        0x00,0x82,0x00,0x90,0x28,0x00,0x30,0x00,0x00,0x00,0xF0,0x00,0x61,0x00,0x70,0x00,
-        0x00,0x03,0x90,0x00,0xAC,0x00,0xB0,0x00,0x04,0x00,0xD0,0x00,0xE5,0x00,0x00,0x00,
-        0x00,0x00,0x28,0xAC,0x00,0x0F,0x09,0x0D,0x82,0x00,0x00,0x00,0x03,0x00,0x00,0x00,
-        0x00,0x0F,0x00,0x00,0x0F,0x00,0x00,0x00,0x16,0x00,0x00,0x00,0x07,0x00,0x00,0x00,
-        0x00,0x16,0x30,0xB0,0x09,0x00,0x00,0x00,0xCA,0x00,0x00,0x00,0x0B,0x00,0x00,0x00,
-        0x40,0x07,0x00,0x00,0x0D,0x00,0x00,0x00,0x5E,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x00,0x00,0x04,0x82,0x16,0xCA,0x5E,0x00,0x30,0xF0,0x70,0x90,0xB0,0xD0,0x00,
-        0x28,0x09,0x00,0x00,0x00,0x00,0x00,0x00,0x30,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0xCA,0xF0,0xD0,0x00,0x00,0x00,0x00,0xF0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x61,0x0B,0x00,0x00,0x00,0x00,0x00,0x00,0x70,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x00,0x40,0x61,0xE5,0x03,0x07,0x0B,0x00,0x90,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0xAC,0x0D,0x00,0x00,0x00,0x00,0x00,0x00,0xB0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x04,0x5E,0x70,0x00,0x00,0x00,0x00,0x00,0xD0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-        0xE5,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
-
-    uint8_t h_nibble, l_nibble;
-
-    // AAAAABBB_BB------
-    h_nibble = source_buffer[0] & 0xF8;
-
-    l_nibble = source_buffer[0] & 0x07;
-    l_nibble |= source_buffer[1] & 0xC0;
-
-    destination_buffer[0] = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
-
-    // --CCCCCD_DDDD----
-    h_nibble = source_buffer[1] & 0x3E;
-
-    l_nibble = source_buffer[1] & 0x01;
-    l_nibble |= source_buffer[2] & 0xF0;
-
-    destination_buffer[1] = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
-
-    // ----EEEE_EFFFFF--
-    h_nibble = source_buffer[2] & 0x0F;
-    h_nibble |= source_buffer[3] & 0x80;
-
-    l_nibble = source_buffer[3] & 0x7C;
-
-    destination_buffer[2] = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
-
-    // ------GG_GGGHHHHH
-    h_nibble = source_buffer[3] & 0x03;
-    h_nibble |= source_buffer[4] & 0xE0;
-
-    l_nibble = source_buffer[4] & 0x1F;
-
-    destination_buffer[3] = (uint8_t) ( (GCR_DEC_TBL[h_nibble] & 0xF0) | (GCR_DEC_TBL[l_nibble] & 0x0F) );
-}
 
 /////////////////////////////////////////////////////////////////////
 
