@@ -43,7 +43,7 @@ MENU_STRUCT settings_menu;
 MENU_STRUCT info_menu;
 
 enum  MENU_IDS{M_BACK, M_IMAGE, M_SETTINGS, M_INFO, \
-               M_BACK_IMAGE, M_INSERT_IMAGE, M_REMOVE_IMAGE, M_WP_IMAGE, M_NEW_IMAGE, M_SAVE_IMAGE, \
+               M_BACK_IMAGE, M_INSERT_IMAGE, M_UNMOUNT_IMAGE, M_WP_IMAGE, M_NEW_IMAGE, M_SAVE_IMAGE, \
                M_BACK_SETTINGS, M_PIN_PB2, M_PIN_PB3, M_SAVE_EEPROM, M_RESTART, \
                M_BACK_INFO, M_VERSION_INFO, M_SDCARD_INFO};
 
@@ -62,11 +62,11 @@ int main(void)
                                          {"Settings",  M_SETTINGS,ENTRY_MENU,0,&settings_menu},
                                          {"Info",      M_INFO,ENTRY_MENU,    0,&info_menu}};
         /// Image Menü
-        MENU_ENTRY image_menu_entrys[] = {{"Insert Image",M_INSERT_IMAGE},
-                                          {"Remove Image",M_REMOVE_IMAGE},
-                                          {"WriteProt.",  M_WP_IMAGE,ENTRY_ONOFF,1},
-                                          {"New Image",   M_NEW_IMAGE},
-                                          {"Save Image",  M_SAVE_IMAGE}};
+        MENU_ENTRY image_menu_entrys[] = {{"Insert Image", M_INSERT_IMAGE},
+                                          {"Unmount Image",M_UNMOUNT_IMAGE},
+                                          {"WriteProt.",   M_WP_IMAGE,ENTRY_ONOFF,1},
+                                          {"New Image",    M_NEW_IMAGE},
+                                          {"Save Image",   M_SAVE_IMAGE}};
         /// Setting Menü
         MENU_ENTRY settings_menu_entrys[] = {{"Pin PB2",M_PIN_PB2, ENTRY_ONOFF, 0},
                                              {"Pin PB3",M_PIN_PB3, ENTRY_ONOFF, 0},
@@ -167,8 +167,8 @@ void reset()
     // Startmeldung ausgeben
     show_start_message();
 
-    // Image Remove
-    remove_image();
+    // Image unmount
+    unmount_image();
 
     // Timer0 --> GCR senden
     init_timer0();
@@ -425,8 +425,8 @@ void check_menu_events(uint16_t menu_event)
                     set_gui_mode(GUI_FILE_BROWSER);
                     break;
 
-                case M_REMOVE_IMAGE:
-                    remove_image();
+                case M_UNMOUNT_IMAGE:
+                    unmount_image();
                     set_gui_mode(GUI_INFO_MODE);
                     break;
 
@@ -438,6 +438,10 @@ void check_menu_events(uint16_t menu_event)
                         set_write_protection(0);
                     }
                     menu_refresh();
+                    break;
+
+                case M_NEW_IMAGE:
+                    create_new_image();
                     break;
 
                 /// Settings Menü
@@ -1562,7 +1566,7 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
 
 /////////////////////////////////////////////////////////////////////
 
-void remove_image()
+void unmount_image()
 {
     close_disk_image(fd);
     is_image_mount = 0;
@@ -1573,6 +1577,16 @@ void remove_image()
 }
 
 /////////////////////////////////////////////////////////////////////
+
+void create_new_image()
+{
+    // unmount old image
+    unmount_image();
+
+    // select the file-format (EXT = g64,d64)
+    // create a new, empty image
+    // filename = disk_xxx.EXT (xxx = 000..999)
+}
 
 /////////////////////////////////////////////////////////////////////
 
