@@ -181,7 +181,7 @@ void set_gui_mode(uint8_t gui_mode);
 void filebrowser_update(uint8_t key_code);
 void filebrowser_refresh(void);
 void init_pb2_pb3(void);
-int8_t init_sd_card(void);
+uint8_t init_sd_card(void);
 void release_sd_card(void);
 uint8_t change_dir(const char* path);
 uint8_t find_file_in_dir(struct fat_fs_struct* fs, struct fat_dir_struct* dd, const char* name, struct fat_dir_entry_struct* dir_entry);
@@ -212,7 +212,7 @@ int8_t open_d64_image(struct fat_file_struct *fd);
 int8_t read_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length); // Tracknummer 1-42
 void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t track_nr, uint8_t* track_buffer, uint16_t *gcr_track_length); // Tracknummer 1-42
 
-void remove_image(void);
+void unmount_image(void);
 
 void endable_wps_port(uint8_t enable);  // 0 = WPS PIN HiZ (set_write_protection() ohne Wirkung) / 1 = WPS PIN als Ausgang
 void set_write_protection(int8_t wp);   // wp=0 image nicht geschützt wp=1 image schreibgeschützt
