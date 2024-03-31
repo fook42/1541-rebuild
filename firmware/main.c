@@ -4,9 +4,9 @@
 * Copyright: (c) 2020 by Thorsten Kattanek <thorsten.kattanek@gmx.de>
 * License: GPL 2
 */
-// adoption for LCD I2C handling, D64 write-support
+// adoption for LCD I2C handling, D64 write-support, 40 Track handling
 // implementation: F00K42
-// last change: 17/12/2021
+// last change: 30/04/2024
 
 /// CPU Clock
 #ifndef F_CPU
@@ -1274,136 +1274,144 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
     uint8_t slice_nr;
     uint8_t SUM;
 
-    if (35 < track_nr)
-    {
-        // need to fake the size of this image as we exceed the available track-information
-        // first attempt: repeat to publish track 35
-        track_nr = 35;
-    }
-
     switch(image_type)
     {
         ///////////////////////////////////////////////////////////////////////////
         case G64_IMAGE: // G64
         {
-            /// Track18 eines G64 einlesen
-
             // offset = (int32_t)track_nr - 1;
             // offset = (offset << 3) + 0x0c;
             offset = (int32_t)track_nr*8 + 4;
 
-            if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+            if(!fat_seek_file(fd,&offset,FAT_SEEK_SET))  break;
+            if(!fat_read_file(fd, (uint8_t*)&offset, 4)) break;
+            if((0==offset) && (35<track_nr))
             {
-                if(fat_read_file(fd, (uint8_t*)&offset, 4))
-                {
-                    if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
-                    {
-                        fat_read_file(fd, (uint8_t*)gcr_track_length, 2);
-                        fat_read_file(fd, track_buffer, *gcr_track_length);
-                        is_read = 1;
-                    }
-                }
+                // need to fake the size of this image as we exceed the available track-information
+                // first attempt: repeat to publish track 35
+                track_nr = 35;
+                offset = (int32_t)track_nr*8 + 4;
+
+                if(!fat_seek_file(fd,&offset,FAT_SEEK_SET))  break;
+                if(!fat_read_file(fd, (uint8_t*)&offset, 4)) break;
             }
+            if(!fat_seek_file(fd,&offset,FAT_SEEK_SET))  break;
+
+            fat_read_file(fd, (uint8_t*)gcr_track_length, 2);
+            fat_read_file(fd, track_buffer, *gcr_track_length);
+            is_read = 1;
         }
         break;
 
         ///////////////////////////////////////////////////////////////////////////
         case D64_IMAGE: // D64
         {
+            offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
+
+            if(!fat_seek_file(fd,&offset,FAT_SEEK_SET))
+            {
+                if (35<track_nr)
+                {
+                    // first attempt: repeat to publish track 35
+                    track_nr = 35;
+                    offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
+                    if(!fat_seek_file(fd,&offset,FAT_SEEK_SET)) break;
+                } else {
+                    break;
+                }
+            }
+
             uint8_t num_of_sectors = MAX_SLICE_SIZE;
             const uint8_t chksum_trackid = track_nr ^ id2 ^ id1;
             const uint8_t gap_size = d64_sector_gap[d64_track_zone[track_nr]];
-            offset = ((int32_t) d64_track_offset[track_nr]) << 8;   // we store only 16bit values;
-            if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+
+            P = track_buffer;
+
+            buffer[0] = id2;
+            // This is the second character of the ID that you specify when creating a new disk.
+            // The drive uses this and the next byte to check with the byte in memory to ensure
+            // the disk is not swapped in the mean time.
+            buffer[1] = id1;
+            buffer[2] = 0x0F;
+            buffer[3] = 0x0F;
+            ConvertToGCR(buffer, header_bytes);
+            sector_nr = 0;
+            for(slice_nr = NUM_OF_SLICES; slice_nr > 0; --slice_nr)
             {
-                P = track_buffer;
-
-                buffer[0] = id2;
-                // This is the second character of the ID that you specify when creating a new disk.
-                // The drive uses this and the next byte to check with the byte in memory to ensure
-                // the disk is not swapped in the mean time.
-                buffer[1] = id1;
-                buffer[2] = 0x0F;
-                buffer[3] = 0x0F;
-                ConvertToGCR(buffer, header_bytes);
-                sector_nr = 0;
-                for(slice_nr = NUM_OF_SLICES; slice_nr > 0; --slice_nr)
+                if (1 == slice_nr)
                 {
-                    if (1 == slice_nr)
-                    {
-                        num_of_sectors = track_slices_last[d64_track_zone[track_nr]];
-                    }
-
-                    fat_read_file(fd, &d64_sector_puffer[1], num_of_sectors*D64_SECTOR_SIZE);
-
-                    current_sector = d64_sector_puffer;
-
-                    for(uint8_t slice_sector_nr=0; slice_sector_nr < num_of_sectors; ++slice_sector_nr)
-                    {
-                        current_sector[0] = 0x07;                   // data-marker for all sectors
-
-                        P[0] = 0xFF;								// SYNC
-                        P[1] = 0xFF;								// SYNC
-                        P[2] = 0xFF;								// SYNC
-                        P[3] = 0xFF;								// SYNC
-                        P[4] = 0xFF;								// SYNC
-
-                        buffer[0] = 0x08;							// Header Markierung
-                        buffer[1] = sector_nr ^ chksum_trackid;     // Checksumme
-                        buffer[2] = sector_nr;
-                        buffer[3] = track_nr;
-                        ConvertToGCR(buffer, &P[5]);
-
-                        P[10] = header_bytes[0];                     // fill in constant header
-                        P[11] = header_bytes[1];                     //  bytes containing
-                        P[12] = header_bytes[2];                     //  disk-id2 & id1
-                        P[13] = header_bytes[3];
-                        P[14] = header_bytes[4];
-                        P += 15;
-
-                        // GAP Bytes als Lücke
-                        for (uint8_t i = HEADER_GAP_BYTES; i>0; --i)
-                        {
-                            *P++ = 0x55;
-                        }
-
-                        // SYNC
-                        *P++ = 0xFF;								// SYNC
-                        *P++ = 0xFF;								// SYNC
-                        *P++ = 0xFF;								// SYNC
-                        *P++ = 0xFF;								// SYNC
-                        *P++ = 0xFF;								// SYNC
-
-                        SUM = 0x07;     // checksum is prefilled with data-marker
-                                        // -> the complete buffer can be processed
-                        for (int i=0; i<257; ++i)
-                        {
-                            SUM ^= current_sector[i];
-                        }
-
-                        for (int i=0; i<256; i+=4)
-                        {
-                            ConvertToGCR(&(current_sector[i]), P);
-                            P += 5;
-                        }
-
-                        buffer[0] = current_sector[256];
-                        buffer[1] = SUM;   // Checksum
-                        buffer[2] = 0;
-                        buffer[3] = 0;
-                        ConvertToGCR(buffer, P);
-                        P += 5;
-
-                        // GCR Bytes als Lücken auffüllen (sorgt für eine Gleichverteilung)
-                        memset(P, 0x55, gap_size);
-                        P += gap_size;
-
-                        current_sector += 256;
-                        ++sector_nr;
-                    }
+                    num_of_sectors = track_slices_last[d64_track_zone[track_nr]];
                 }
-                *gcr_track_length = P - gcr_track;
+
+                fat_read_file(fd, &d64_sector_puffer[1], num_of_sectors*D64_SECTOR_SIZE);
+
+                current_sector = d64_sector_puffer;
+
+                for(uint8_t slice_sector_nr=0; slice_sector_nr < num_of_sectors; ++slice_sector_nr)
+                {
+                    current_sector[0] = 0x07;                   // data-marker for all sectors
+
+                    P[0] = 0xFF;								// SYNC
+                    P[1] = 0xFF;								// SYNC
+                    P[2] = 0xFF;								// SYNC
+                    P[3] = 0xFF;								// SYNC
+                    P[4] = 0xFF;								// SYNC
+
+                    buffer[0] = 0x08;							// Header Markierung
+                    buffer[1] = sector_nr ^ chksum_trackid;     // Checksumme
+                    buffer[2] = sector_nr;
+                    buffer[3] = track_nr;
+                    ConvertToGCR(buffer, &P[5]);
+
+                    P[10] = header_bytes[0];                     // fill in constant header
+                    P[11] = header_bytes[1];                     //  bytes containing
+                    P[12] = header_bytes[2];                     //  disk-id2 & id1
+                    P[13] = header_bytes[3];
+                    P[14] = header_bytes[4];
+                    P += 15;
+
+                    // GAP Bytes als Lücke
+                    for (uint8_t i = HEADER_GAP_BYTES; i>0; --i)
+                    {
+                        *P++ = 0x55;
+                    }
+
+                    // SYNC
+                    *P++ = 0xFF;								// SYNC
+                    *P++ = 0xFF;								// SYNC
+                    *P++ = 0xFF;								// SYNC
+                    *P++ = 0xFF;								// SYNC
+                    *P++ = 0xFF;								// SYNC
+
+                    SUM = 0x07;     // checksum is prefilled with data-marker
+                                    // -> the complete buffer can be processed
+                    for (int i=0; i<257; ++i)
+                    {
+                        SUM ^= current_sector[i];
+                    }
+
+                    for (int i=0; i<256; i+=4)
+                    {
+                        ConvertToGCR(&(current_sector[i]), P);
+                        P += 5;
+                    }
+
+                    buffer[0] = current_sector[256];
+                    buffer[1] = SUM;   // Checksum
+                    buffer[2] = 0;
+                    buffer[3] = 0;
+                    ConvertToGCR(buffer, P);
+                    P += 5;
+
+                    // GCR Bytes als Lücken auffüllen (sorgt für eine Gleichverteilung)
+                    memset(P, 0x55, gap_size);
+                    P += gap_size;
+
+                    current_sector += 256;
+                    ++sector_nr;
+                }
             }
+            *gcr_track_length = P - gcr_track;
         }
         break;
 
@@ -1430,23 +1438,36 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
         ///////////////////////////////////////////////////////////////////////////
         case G64_IMAGE:	// G64
             {
+                uint16_t imgtracklen = 0;
                 // read jump-table in g64 header -- fetch track-offset
-                offset = (int32_t)track_nr - 1;
-                offset = (offset << 3) + 0x0c;
 
-                if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
+                offset = 0x0a; // read track_len (0x0a+0x0b)
+                if(!fat_seek_file(fd,&offset,FAT_SEEK_SET))  break;
+                if(!fat_read_file(fd, (uint8_t*)&imgtracklen, 2)) break; // should be 0x1EF8 (=7928)
+
+                offset = (int32_t)track_nr - 1;
+                offset = (offset << 3) + 0x0c; // read track_offset (0x0c..)
+
+                if(!fat_seek_file(fd,&offset,FAT_SEEK_SET))  break;
+                if(!fat_read_file(fd, (uint8_t*)&offset, 4)) break;
+
+                if((0==offset) && (35<track_nr))
                 {
-                    // now read the offsetvalue from the jumptable
-                    if(fat_read_file(fd, (uint8_t*)&offset, 4))
-                    {
-                        // add 2 to skip tracklengh data
-                        offset += 2;
-                        if(fat_seek_file(fd,&offset,FAT_SEEK_SET))
-                        {
-                            fat_write_file(fd, track_buffer, *gcr_track_length);
-                        }
-                    }
-                }
+                    // writes beyond file-limits (e.g.35tracks), will extend image file
+                    // we need to update offset-table with new track-offset value
+                    offset = (imgtracklen+2)*(track_nr-1)+684;
+
+                    offset_track = (int32_t)track_nr*8 + 4;
+                    if(!fat_seek_file(fd,&offset_track,FAT_SEEK_SET))  break;
+                    fat_write_file(fd, (uint8_t*)&offset, 4);
+
+                } break;
+
+                // add 2 to skip tracklengh data
+                offset += 2;
+                if(!fat_seek_file(fd,&offset,FAT_SEEK_SET))  break;
+
+                fat_write_file(fd, track_buffer, *gcr_track_length);
             }
             break;
 
