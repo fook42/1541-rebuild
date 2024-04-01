@@ -8,12 +8,14 @@
 #ifndef _FONTDATA_H_INCLUDE_
 #define _FONTDATA_H_INCLUDE_
 
+#include <avr/pgmspace.h>
+
 #define FONT_WIDTH      (8)
 #define FONT_HEIGHT     (8)
 #define FONT_MINCHAR    (0x20)
 #define FONT_MAXCHAR    (0x7F)
 
-const uint8_t FontData[FONT_MAXCHAR-FONT_MINCHAR+1][FONT_WIDTH] = {
+const uint8_t FontData[FONT_MAXCHAR-FONT_MINCHAR+1][FONT_WIDTH] PROGMEM = {
 {
 0b00000000,
 0b00000000,

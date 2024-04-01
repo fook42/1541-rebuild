@@ -6,6 +6,7 @@
 // last change: 19/09/2021
 
 #include <avr/io.h>
+#include <avr/pgmspace.h>
 #include "i2c.h"
 #include "oled.h"
 #include "Font_c64_ascii.h"
@@ -14,7 +15,7 @@
 extern uint8_t DEV_I2C_ADDR;
 uint8_t oled_cursor_x, oled_cursor_y;
 
-const uint8_t OLED_customchars[][8] = {
+const uint8_t OLED_customchars[][8] PROGMEM = {
 { // Menü More Top
     0b00000000,
     0b00010000,
@@ -167,7 +168,7 @@ void oled_data( uint8_t data )
         FontPtr = (uint8_t*) &OLED_customchars[data][0];
     } else if (FONT_MAXCHAR < data)
     {
-        FontPtr = (uint8_t*) &FontData[FONT_MAXCHAR][0];       
+        FontPtr = (uint8_t*) &FontData[FONT_MAXCHAR][0];
     } else {
         FontPtr = (uint8_t*) &FontData[data-FONT_MINCHAR][0];
     }
@@ -178,7 +179,7 @@ void oled_data( uint8_t data )
 
     for(uint8_t char_height=0; char_height<FONT_HEIGHT; ++char_height)
     {
-        (void)i2c_write( FontPtr[char_height] );
+        (void)i2c_write( pgm_read_byte(&FontPtr[char_height]) );
     }
     i2c_stop();
 
@@ -192,7 +193,7 @@ void oled_data( uint8_t data )
 
     for(uint8_t char_height=0; char_height<FONT_HEIGHT; ++char_height)
     {
-        (void)i2c_write( FontPtr[char_height] );
+        (void)i2c_write( pgm_read_byte(&FontPtr[char_height]) );
     }
     i2c_stop();
 
