@@ -207,7 +207,7 @@ void check_stepper_signals()
     // und auswerten
     if(stepper_signal_r_pos != stepper_signal_w_pos)    // Prüfen ob sich was neues im Ringpuffer für die Steppersignale befindet
     {
-        uint8_t stepper = stepper_signal_puffer[stepper_signal_r_pos] | stepper_signal_puffer[stepper_signal_r_pos-1]<<2;
+        uint8_t stepper = stepper_signal_puffer[stepper_signal_r_pos & 0x7F] | stepper_signal_puffer[(stepper_signal_r_pos-1) & 0x7F]<<2;
         stepper_signal_r_pos++;
 
         switch(stepper)
@@ -1679,7 +1679,7 @@ void send_disk_change(void)
 ISR (PCINT3_vect)
 {
     // Stepper Signale an PD0 und PD1
-    stepper_signal_puffer[stepper_signal_w_pos] = STP_PIN & ((1<<STP0) | (1<<STP1));
+    stepper_signal_puffer[stepper_signal_w_pos & 0x7F] = STP_PIN & ((1<<STP0) | (1<<STP1));
     stepper_signal_w_pos++;
 }
 

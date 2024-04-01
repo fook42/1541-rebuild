@@ -324,7 +324,7 @@ const uint8_t track_slices_last[4] = { 4, 2, 1, 0 };    // 1*17 + x .. = sector_
 uint8_t d64_sector_puffer[MAX_SLICE_SIZE*D64_SECTOR_SIZE+5];
 
 // Ringpuffer für reinkommende Stepper Signale
-uint8_t stepper_signal_puffer[0x100]; // Ringpuffer für Stepper Signale (256 Bytes)
+uint8_t stepper_signal_puffer[0x80]; // Ringpuffer für Stepper Signale (128 Bytes)
 volatile uint8_t stepper_signal_r_pos = 0;
 volatile uint8_t stepper_signal_w_pos = 0;
 volatile uint8_t stepper_signal_time = 0;
