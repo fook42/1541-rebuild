@@ -1270,8 +1270,6 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
     uint8_t* current_sector;
     uint8_t is_read = 0;
     int32_t offset = 0;
-    uint8_t sector_nr;
-    uint8_t slice_nr;
     uint8_t SUM;
 
     switch(image_type)
@@ -1321,7 +1319,7 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
                 }
             }
 
-            uint8_t num_of_sectors = MAX_SLICE_SIZE;
+            const uint8_t num_of_sectors = d64_sector_count[d64_track_zone[track_nr]];
             const uint8_t chksum_trackid = track_nr ^ id2 ^ id1;
             const uint8_t gap_size = d64_sector_gap[d64_track_zone[track_nr]];
 
@@ -1335,81 +1333,72 @@ int8_t read_disk_track(struct fat_file_struct* fd, uint8_t image_type, uint8_t t
             buffer[2] = 0x0F;
             buffer[3] = 0x0F;
             ConvertToGCR(buffer, header_bytes);
-            sector_nr = 0;
-            for(slice_nr = NUM_OF_SLICES; slice_nr > 0; --slice_nr)
+
+            fat_read_file(fd, &d64_sector_puffer[1], num_of_sectors*D64_SECTOR_SIZE);
+
+            current_sector = d64_sector_puffer;
+
+            for(uint8_t sector_nr=0; sector_nr < num_of_sectors; ++sector_nr)
             {
-                if (1 == slice_nr)
+                current_sector[0] = 0x07;                   // data-marker for all sectors
+
+                P[0] = 0xFF;								// SYNC
+                P[1] = 0xFF;								// SYNC
+                P[2] = 0xFF;								// SYNC
+                P[3] = 0xFF;								// SYNC
+                P[4] = 0xFF;								// SYNC
+
+                buffer[0] = 0x08;							// Header Markierung
+                buffer[1] = sector_nr ^ chksum_trackid;     // Checksumme
+                buffer[2] = sector_nr;
+                buffer[3] = track_nr;
+                ConvertToGCR(buffer, &P[5]);
+
+                P[10] = header_bytes[0];                     // fill in constant header
+                P[11] = header_bytes[1];                     //  bytes containing
+                P[12] = header_bytes[2];                     //  disk-id2 & id1
+                P[13] = header_bytes[3];
+                P[14] = header_bytes[4];
+                P += 15;
+
+                // GAP Bytes als Lücke
+                for (uint8_t i = HEADER_GAP_BYTES; i>0; --i)
                 {
-                    num_of_sectors = track_slices_last[d64_track_zone[track_nr]];
+                    *P++ = 0x55;
                 }
 
-                fat_read_file(fd, &d64_sector_puffer[1], num_of_sectors*D64_SECTOR_SIZE);
+                // SYNC
+                *P++ = 0xFF;								// SYNC
+                *P++ = 0xFF;								// SYNC
+                *P++ = 0xFF;								// SYNC
+                *P++ = 0xFF;								// SYNC
+                *P++ = 0xFF;								// SYNC
 
-                current_sector = d64_sector_puffer;
-
-                for(uint8_t slice_sector_nr=0; slice_sector_nr < num_of_sectors; ++slice_sector_nr)
+                SUM = 0x07;     // checksum is prefilled with data-marker
+                                // -> the complete buffer can be processed
+                for (int i=0; i<257; ++i)
                 {
-                    current_sector[0] = 0x07;                   // data-marker for all sectors
+                    SUM ^= current_sector[i];
+                }
 
-                    P[0] = 0xFF;								// SYNC
-                    P[1] = 0xFF;								// SYNC
-                    P[2] = 0xFF;								// SYNC
-                    P[3] = 0xFF;								// SYNC
-                    P[4] = 0xFF;								// SYNC
-
-                    buffer[0] = 0x08;							// Header Markierung
-                    buffer[1] = sector_nr ^ chksum_trackid;     // Checksumme
-                    buffer[2] = sector_nr;
-                    buffer[3] = track_nr;
-                    ConvertToGCR(buffer, &P[5]);
-
-                    P[10] = header_bytes[0];                     // fill in constant header
-                    P[11] = header_bytes[1];                     //  bytes containing
-                    P[12] = header_bytes[2];                     //  disk-id2 & id1
-                    P[13] = header_bytes[3];
-                    P[14] = header_bytes[4];
-                    P += 15;
-
-                    // GAP Bytes als Lücke
-                    for (uint8_t i = HEADER_GAP_BYTES; i>0; --i)
-                    {
-                        *P++ = 0x55;
-                    }
-
-                    // SYNC
-                    *P++ = 0xFF;								// SYNC
-                    *P++ = 0xFF;								// SYNC
-                    *P++ = 0xFF;								// SYNC
-                    *P++ = 0xFF;								// SYNC
-                    *P++ = 0xFF;								// SYNC
-
-                    SUM = 0x07;     // checksum is prefilled with data-marker
-                                    // -> the complete buffer can be processed
-                    for (int i=0; i<257; ++i)
-                    {
-                        SUM ^= current_sector[i];
-                    }
-
-                    for (int i=0; i<256; i+=4)
-                    {
-                        ConvertToGCR(&(current_sector[i]), P);
-                        P += 5;
-                    }
-
-                    buffer[0] = current_sector[256];
-                    buffer[1] = SUM;   // Checksum
-                    buffer[2] = 0;
-                    buffer[3] = 0;
-                    ConvertToGCR(buffer, P);
+                for (int i=0; i<256; i+=4)
+                {
+                    ConvertToGCR(&(current_sector[i]), P);
                     P += 5;
-
-                    // GCR Bytes als Lücken auffüllen (sorgt für eine Gleichverteilung)
-                    memset(P, 0x55, gap_size);
-                    P += gap_size;
-
-                    current_sector += 256;
-                    ++sector_nr;
                 }
+
+                buffer[0] = current_sector[256];
+                buffer[1] = SUM;   // Checksum
+                buffer[2] = 0;
+                buffer[3] = 0;
+                ConvertToGCR(buffer, P);
+                P += 5;
+
+                // GCR Bytes als Lücken auffüllen (sorgt für eine Gleichverteilung)
+                memset(P, 0x55, gap_size);
+                P += gap_size;
+
+                current_sector += 256;
             }
             *gcr_track_length = P - gcr_track;
         }
