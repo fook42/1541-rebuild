@@ -1460,8 +1460,7 @@ void write_disk_track(struct fat_file_struct *fd, uint8_t image_type, uint8_t tr
                     offset_track = (int32_t)track_nr*8 + 4;
                     if(!fat_seek_file(fd,&offset_track,FAT_SEEK_SET))  break;
                     fat_write_file(fd, (uint8_t*)&offset, 4);
-
-                } break;
+                }
 
                 // add 2 to skip tracklengh data
                 offset += 2;
