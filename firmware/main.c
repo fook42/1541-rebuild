@@ -6,7 +6,11 @@
 */
 // adoption for LCD I2C handling, D64 write-support, 40 Track handling
 // implementation: F00K42
-// last change: 30/04/2024
+
+// backport to HW version 1.4.0
+// last change: 16/05/2024
+
+
 
 /// CPU Clock
 #ifndef F_CPU
@@ -207,15 +211,15 @@ void check_stepper_signals()
     // und auswerten
     if(stepper_signal_r_pos != stepper_signal_w_pos)    // Prüfen ob sich was neues im Ringpuffer für die Steppersignale befindet
     {
-        uint8_t stepper = stepper_signal_puffer[stepper_signal_r_pos & 0x7F] | stepper_signal_puffer[(stepper_signal_r_pos-1) & 0x7F]<<2;
+        uint8_t stepper = stepper_signal_puffer[stepper_signal_r_pos & 0x7F]>>2 | stepper_signal_puffer[(stepper_signal_r_pos-1) & 0x7F];
         stepper_signal_r_pos++;
 
         switch(stepper)
         {
-            case 0b00000011:
-            case 0b00000100:
-            case 0b00001001:
-            case 0b00001110:
+            case 0b00110000:
+            case 0b01000000:
+            case 0b10010000:
+            case 0b11100000:
                 {
                     // DEC
                     stepper_dec();
@@ -224,10 +228,10 @@ void check_stepper_signals()
                 }
                 break;
 
-            case 0b00000001:
-            case 0b00000110:
-            case 0b00001011:
-            case 0b00001100:
+            case 0b00010000:
+            case 0b01100000:
+            case 0b10110000:
+            case 0b11000000:
                 {
                     // INC
                     stepper_inc();
@@ -1023,9 +1027,9 @@ void init_stepper(void)
     STP_DDR &= ~(1<<STP0 | 1<<STP1);
     akt_half_track = INIT_TRACK << 1;
 
-    // Pin Change Ineterrupt für beide STPx PIN's aktivieren
-    PCICR = 0x08;   // Enable PCINT24..31
-    PCMSK3 = 0x03;  // Set Mask Register für PCINT24 und PCINT25
+    // Pin Change Interrupt für beide PIN's aktivieren
+    PCICR = 0x01;   // Enable PCINT0..7
+    PCMSK0 = 0xc0;  // Set Mask Register für PCINT6 und PCINT7
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1675,9 +1679,9 @@ void send_disk_change(void)
 
 // Interrupt Service Routinen
 
-ISR (PCINT3_vect)
+ISR (PCINT0_vect)
 {
-    // Stepper Signale an PD0 und PD1
+    // Stepper Signale an PA6 und PA7
     stepper_signal_puffer[stepper_signal_w_pos & 0x7F] = STP_PIN & ((1<<STP0) | (1<<STP1));
     stepper_signal_w_pos++;
 }

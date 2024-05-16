@@ -26,12 +26,12 @@
 
 // --------------------------------------------------
 // -- 10 pin parallel Port pinout -------------------
-#define PAR_LCD_PORT        PORTC
-#define PAR_LCD_DDR         DDRC
-#define PAR_LCD_DB          PC0
+#define PAR_LCD_PORT        PORTA
+#define PAR_LCD_DDR         DDRA
+#define PAR_LCD_DB          PA0
 
-#define PAR_LCD_RS          PC4         // (RS: 1=Data, 0=Command)
-#define PAR_LCD_EN          PC5         // (EN: 1-Impuls für Daten)
+#define PAR_LCD_RS          PA4         // (RS: 1=Data, 0=Command)
+#define PAR_LCD_EN          PA5         // (EN: 1-Impuls für Daten)
 // --------------------------------------------------
 
 ////////////////////////////////////////////////////////////////////////////////
