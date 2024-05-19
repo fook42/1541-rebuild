@@ -217,9 +217,9 @@ void check_stepper_signals()
         switch(stepper)
         {
             case 0b00110000:
-            case 0b10000000:
-            case 0b01100000:
-            case 0b11010000:
+            case 0b01000000:
+            case 0b10010000:
+            case 0b11100000:
                 {
                     // DEC
                     stepper_dec();
@@ -228,9 +228,9 @@ void check_stepper_signals()
                 }
                 break;
 
-            case 0b00100000:
-            case 0b10010000:
-            case 0b01110000:
+            case 0b00010000:
+            case 0b01100000:
+            case 0b10110000:
             case 0b11000000:
                 {
                     // INC
