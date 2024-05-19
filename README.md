@@ -16,7 +16,9 @@ Die Hardware wird mit KiCad entwickelt. Version 5.1.4 unter Ubuntu.
 ### Software
 Die Firmware wurde in C entwickelt - kompilierbar mit avr-gcc unter Linux.
 
-#### letzte SW-Version: 1.3.7
+#### letzte SW-Version: 1.3.8
+- Unterstützung von 40 Track Images (G64 & D64)
+- G64- und D64-Schreibroutinen
 - Unterstützung von 16\*2 LCD Displays
 - Implementation von I2C (=TWI) Routinen für Displays
    - LCD Displays mit Port Expander PCF8574
